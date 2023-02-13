@@ -10,7 +10,7 @@ else()
   set(COMMONFLAGS "${COMMONFLAGS} -O3 -ffunction-sections -fdata-sections")
 endif()
 
-if(${CMAKE_SYSTEM_NAME} STREQUAL Linux)
+if(${CMAKE_SYSTEM_NAME} STREQUAL Linux OR(${CMAKE_SYSTEM_NAME} STREQUAL Darwin))
   set(COMMONFLAGS "${COMMONFLAGS} -fPIC -fstack-protector-strong")
 endif()
 
@@ -27,7 +27,11 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror=return-type -Wno-sign-comp
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall ${COMMONFLAGS}")
 
 if(${CMAKE_SYSTEM_NAME} STREQUAL Linux)
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${COMMONFLAGS} -lrt -lpthread")
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${COMMONFLAGS} -lrt")
+endif()
+
+if(${CMAKE_SYSTEM_NAME} STREQUAL Linux OR(${CMAKE_SYSTEM_NAME} STREQUAL Darwin))
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${COMMONFLAGS} -lpthread")
 endif()
 
 if(${CMAKE_SYSTEM_NAME} STREQUAL Windows)
@@ -41,7 +45,7 @@ endif()
 # Configure the build
 set(BUILD_HTTP_CONTROL_API FALSE)
 
-if(${CMAKE_SYSTEM_NAME} STREQUAL Linux OR(${CMAKE_SYSTEM_NAME} STREQUAL Windows))
+if(${CMAKE_SYSTEM_NAME} STREQUAL Linux OR(${CMAKE_SYSTEM_NAME} STREQUAL Windows) OR(${CMAKE_SYSTEM_NAME} STREQUAL Darwin))
   set(BUILD_HTTP_CONTROL_API TRUE)
 endif()
 
@@ -62,6 +66,20 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL Windows)
   file(GLOB port_windows_SRC "${CMAKE_CURRENT_LIST_DIR}/ports/windows/*.cpp")
   file(GLOB port_shared_unix_windows_SRC "${CMAKE_CURRENT_LIST_DIR}/ports/shared_unix_windows/*.cpp")
   list(APPEND husarnet_core_SRC ${port_windows_SRC} ${port_shared_unix_windows_SRC})
+endif()
+
+if(${CMAKE_SYSTEM_NAME} STREQUAL Darwin)
+  include_directories(${CMAKE_CURRENT_LIST_DIR}/ports/macos)
+  include_directories(${CMAKE_CURRENT_LIST_DIR}/ports/shared_unix_windows)
+  file(GLOB port_macos_SRC "${CMAKE_CURRENT_LIST_DIR}/ports/macos/*.cpp")
+  file(GLOB port_shared_unix_windows_SRC "${CMAKE_CURRENT_LIST_DIR}/ports/shared_unix_windows/*.cpp")
+  list(APPEND husarnet_core_SRC ${port_macos_SRC} ${port_shared_unix_windows_SRC})
+endif()
+
+if(${CMAKE_SYSTEM_NAME} STREQUAL ESP32)
+  include_directories(${CMAKE_CURRENT_LIST_DIR}/ports/esp32)
+  file(GLOB port_esp32_SRC "${CMAKE_CURRENT_LIST_DIR}/ports/esp32/*.cpp")
+  list(APPEND husarnet_core_SRC ${port_esp32_SRC})
 endif()
 
 include_directories(${CMAKE_CURRENT_LIST_DIR}/ports)
@@ -127,6 +145,11 @@ target_include_directories(sodium PUBLIC ${libsodium_SOURCE_DIR}/src/libsodium/i
 target_include_directories(sodium PUBLIC ${CMAKE_CURRENT_LIST_DIR}/libsodium-config)
 target_include_directories(sodium PUBLIC ${CMAKE_CURRENT_LIST_DIR}/libsodium-config/sodium)
 target_compile_options(sodium PRIVATE -DCONFIGURED=1)
+
+if(${CMAKE_SYSTEM_NAME} STREQUAL Darwin)
+  target_link_libraries(husarnet_core stdc++)
+endif()
+
 target_link_libraries(husarnet_core sodium)
 
 FetchContent_Declare(
@@ -136,6 +159,7 @@ FetchContent_Declare(
 )
 set(JSON_BuildTests OFF)
 FetchContent_MakeAvailable(nlohmann_json)
+target_include_directories(husarnet_core PUBLIC ${nlohmann_json_SOURCE_DIR}/include)
 target_link_libraries(husarnet_core nlohmann_json)
 
 FetchContent_Declare(
@@ -147,17 +171,20 @@ FetchContent_MakeAvailable(better_enums)
 target_include_directories(husarnet_core PUBLIC ${better_enums_SOURCE_DIR})
 target_compile_options(husarnet_core PUBLIC -DBETTER_ENUMS_STRICT_CONVERSION=1)
 
-FetchContent_Declare(
-  sqlite3
-  URL https://sqlite.org/2022/sqlite-amalgamation-3390200.zip
-)
-FetchContent_MakeAvailable(sqlite3)
-include_directories(${sqlite3_SOURCE_DIR})
-add_library(sqlite3 STATIC ${sqlite3_SOURCE_DIR}/sqlite3.c)
-target_link_libraries(husarnet_core sqlite3 ${CMAKE_DL_LIBS})
+if((${CMAKE_SYSTEM_NAME} STREQUAL Linux) OR(${CMAKE_SYSTEM_NAME} STREQUAL Windows))
+  FetchContent_Declare(
+    sqlite3
+    URL https://sqlite.org/2022/sqlite-amalgamation-3390200.zip
+  )
+  FetchContent_MakeAvailable(sqlite3)
+  include_directories(${sqlite3_SOURCE_DIR})
+  add_library(sqlite3 STATIC ${sqlite3_SOURCE_DIR}/sqlite3.c)
+  target_link_libraries(husarnet_core sqlite3 ${CMAKE_DL_LIBS})
+  target_compile_options(husarnet_core PUBLIC -DENABLE_LEGACY_CONFIG=1)
+endif()
 
 # Include unix port libraries
-if(${CMAKE_SYSTEM_NAME} STREQUAL Linux)
+if(${CMAKE_SYSTEM_NAME} STREQUAL Linux OR(${CMAKE_SYSTEM_NAME} STREQUAL Darwin))
   FetchContent_Declare(
     c-ares
     GIT_REPOSITORY https://github.com/c-ares/c-ares.git
