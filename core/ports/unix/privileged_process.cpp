@@ -21,6 +21,7 @@
 #include "husarnet/util.h"
 
 const static std::string hostnamePath = "/etc/hostname";
+const static std::string configDir = "/var/lib/husarnet/";
 
 PrivilegedProcess::PrivilegedProcess()
 {
@@ -62,7 +63,7 @@ json PrivilegedProcess::handleSetSelfHostname(json data)
   Port::writeFile(hostnamePath, newHostname);
 
   if(system("hostname -F /etc/hostname") != 0) {
-    LOG("cannot update hostname");
+    LOG_ERROR("cannot update hostname to %s", newHostname.c_str());
     return false;
   }
 
@@ -73,6 +74,19 @@ json PrivilegedProcess::handleNotifyReady(json data)
 {
   Port::notifyReady();
   return true;
+}
+
+json PrivilegedProcess::handleRunHook(json data)
+{
+  auto path = data.get<std::string>();
+  Port::runScripts(configDir + path);
+  return true;
+}
+
+json PrivilegedProcess::handleCheckHookExists(json data)
+{
+  auto path = data.get<std::string>();
+  return Port::checkScriptsExist(configDir + path);
 }
 
 void PrivilegedProcess::run()
@@ -111,6 +125,12 @@ void PrivilegedProcess::run()
         break;
       case +PrivilegedMethod::notifyReady:
         response = handleNotifyReady(data);
+        break;
+      case +PrivilegedMethod::runHook:
+        response = handleRunHook(data);
+        break;
+      case +PrivilegedMethod::checkHook:
+        response = handleCheckHookExists(data);
         break;
     }
 

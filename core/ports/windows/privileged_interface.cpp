@@ -3,6 +3,7 @@
 // License: specified in project_root/LICENSE.txt
 #include <chrono>
 #include <condition_variable>
+#include <fstream>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -101,20 +102,31 @@ namespace Privileged {
   Identity readIdentity()
   {
     auto identityPath = getIdentityPath();
+    auto identity = Identity::deserialize(Port::readFile(identityPath));
+    return identity;
+  }
+
+  bool checkValidIdentityExists()
+  {
+    auto identityPath = getIdentityPath();
 
     if(!Port::isFile(identityPath)) {
-      auto identity = Identity::create();
-      Privileged::writeIdentity(identity);
-      return identity;
+      return false;
     }
 
     auto identity = Identity::deserialize(Port::readFile(identityPath));
 
     if(!identity.isValid()) {
-      identity = Identity::create();
-      Privileged::writeIdentity(identity);
+      return false;
     }
 
+    return true;
+  }
+
+  Identity createIdentity()
+  {
+    auto identity = Identity::create();
+    Privileged::writeIdentity(identity);
     return identity;
   }
 
@@ -191,7 +203,7 @@ namespace Privileged {
     bool result =
         GetComputerNameEx(ComputerNamePhysicalDnsHostname, buf, &size);
     if(!result) {
-      LOG("Cant retrieve hostname");
+      LOG_WARNING("Cant retrieve hostname");
       return "windows-pc";
     }
 
@@ -217,5 +229,54 @@ namespace Privileged {
   void notifyReady()
   {
     // Not implemented in Windows port.
+  }
+
+  void runScripts(const std::string& path)
+  {
+    char* conf_path = std::getenv("PROGRAMDATA");
+    std::string full_path(conf_path);
+    full_path += "\\husarnet\\";
+    full_path += path;
+    std::filesystem::path dir(full_path);
+    std::string msg = "checking if valid hooks under path " + full_path;
+    LOG(msg.c_str());
+
+    if(!std::filesystem::exists(dir) || !std::filesystem::is_directory(dir)) {
+      return;
+    }
+
+    for(const auto& entry : std::filesystem::directory_iterator(dir)) {
+      if(entry.path().extension() == ".ps1" &&
+         (entry.status().permissions() & std::filesystem::perms::owner_exec) ==
+             std::filesystem::perms::owner_exec) {
+        std::string command = "powershell.exe -File " + entry.path().string();
+        std::system(command.c_str());
+      }
+    }
+  }
+
+  bool checkScriptsExist(const std::string& path)
+  {
+    char* conf_path = std::getenv("PROGRAMDATA");
+    std::string full_path(conf_path);
+    full_path += "\\husarnet\\";
+    full_path += path;
+    std::filesystem::path dir(full_path);
+    std::string msg = "checking if valid hooks under path " + full_path;
+    LOG(msg.c_str());
+
+    if(!std::filesystem::exists(dir) || !std::filesystem::is_directory(dir)) {
+      return false;
+    }
+
+    auto dirIterator = std::filesystem::directory_iterator(dir);
+    return std::any_of(
+        std::filesystem::begin(dirIterator), std::filesystem::end(dirIterator),
+        [](const std::filesystem::directory_entry& entry) {
+          return entry.path().extension() == ".ps1" &&
+                 (entry.status().permissions() &
+                  std::filesystem::perms::owner_exec) ==
+                     std::filesystem::perms::owner_exec;
+        });
   }
 }  // namespace Privileged

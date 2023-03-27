@@ -8,7 +8,7 @@
 #include "husarnet/config_storage.h"
 #include "husarnet/ipaddress.h"
 
-#define HUSARNET_VERSION "2.0.61"
+#define HUSARNET_VERSION "2.0.100"
 #define WEBSETUP_SERVER_PORT 5580
 #define WEBSETUP_CLIENT_PORT 4800
 #define BASESERVER_PORT 443
@@ -38,6 +38,8 @@ const std::map<UserSetting, std::string> userDefaults = {
     {UserSetting::extraAdvertisedAddress, ""},
     {UserSetting::joinCode, ""},
     {UserSetting::hostname, ""},
+    {UserSetting::enableHooks, falseValue},
+    {UserSetting::logVerbosity, "1"},
 };
 
 const std::map<InternalSetting, std::string> internalDefaults = {

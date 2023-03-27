@@ -28,13 +28,14 @@ pushd ${release_base}
 golden_path="$HOME/golden"
 golden_tar_path="${golden_path}/tgz"
 golden_rpm_path="${golden_path}/rpm"
+golden_pkg_path="${golden_path}/pkg"
 working_path="/var/www/install"
 
 unix_archs="amd64 i386 arm64 armhf riscv64"
 
 echo "[==] Adding versioned filenames"
 for arch in ${unix_archs}; do
-  for package_type in tar deb rpm; do
+  for package_type in tar pkg deb rpm; do
     cp husarnet-unix-${arch}.${package_type} husarnet-${package_version}-${arch}.${package_type}
   done
 done
@@ -44,6 +45,23 @@ mkdir -p ${golden_tar_path}
 for arch in ${unix_archs}; do
   cp husarnet-${package_version}-${arch}.tar ${golden_tar_path}
   ln -fs husarnet-${package_version}-${arch}.tar ${golden_tar_path}/husarnet-latest-${arch}.tar
+done
+
+echo "[==] Adding pacman files"
+mkdir -p ${golden_pkg_path}
+for arch in ${unix_archs}; do
+  if [[ ${arch} -eq armhf ]]; then
+    archlinux_arch_name="armv7h"
+  elif [[ ${arch} -eq arm64 ]]; then
+    archlinux_arch_name="aarch64"
+  elif [[ ${arch} -eq amd64 ]]; then
+    archlinux_arch_name="x86-64"
+  else
+    archlinux_arch_name=${arch}
+  fi
+
+  mkdir -p ${golden_pkg_path}/${archlinux_arch_name}
+  cp husarnet-${package_version}-${arch}.pkg ${golden_pkg_path}/${archlinux_arch_name}/husarnet-${package_version}-${arch}.pkg
 done
 
 echo "[==] Adding rpm files"
@@ -73,6 +91,7 @@ mkdir -p ${working_path}/rpm
 mkdir -p ${working_path}/deb
 
 cp -R ${golden_tar_path}/.  ${working_path}/tgz/
+cp -R ${golden_pkg_path}/.  ${working_path}/pacman/
 cp -R ${golden_rpm_path}/.  ${working_path}/yum/
 cp -R ${golden_rpm_path}/.  ${working_path}/rpm/
 cp -R $HOME/.aptly/public/. ${working_path}/deb/
@@ -87,6 +106,11 @@ if [ "${deploy_target}" == "nightly" ]; then
   sed "s=install.husarnet=nightly.husarnet=" ${working_path}/husarnet_deb.repo > ${working_path}/husarnet-nightly_deb.repo
   sed "s=husarnet.com/husarnet_rpm.repo=husarnet.com/husarnet-nightly_rpm.repo=" -i ${working_path}/install-nightly.sh
   sed "s=husarnet.com/husarnet_deb.repo=husarnet.com/husarnet-nightly_deb.repo=" -i ${working_path}/install-nightly.sh
+
+  # if on nightly, we can also have mac
+  echo "[==] Copy MacOS ARM64 binaries"
+  tar -zcf husarnet-macos-${package_version}-arm64.tar.gz husarnet-macos-arm64 husarnet-daemon-unix-macos_arm64
+  cp husarnet-macos-${package_version}-arm64.tar.gz ${working_path}/husarnet-macos-${package_version}-arm64.tar.gz
 fi
 
 echo "[==] Copy also windows installer exe"

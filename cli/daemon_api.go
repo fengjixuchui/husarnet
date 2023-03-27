@@ -56,6 +56,7 @@ type DaemonStatus struct {
 	Version       string
 	DashboardFQDN string `json:"dashboard_fqdn"`
 	IsDirty       bool   `json:"is_dirty"`
+	HooksEnabled  bool   `json:"hooks_enabled"`
 
 	WebsetupAddress netip.Addr           `json:"websetup_address"`
 	BaseConnection  BaseConnectionStatus `json:"base_connection"`
@@ -72,6 +73,12 @@ type DaemonStatus struct {
 	UserSettings map[string]string     `json:"user_settings"` // TODO long-term - think about a better structure (more importantly enums) to hold this if needed
 	HostTable    map[string]netip.Addr `json:"host_table"`
 	Peers        []PeerStatus
+}
+
+type LogsSettings struct {
+	VerbosityLevel int `json:"verbosity"`
+	Size           int `json:"size"`
+	CurrentSize    int `json:"current_size"`
 }
 
 func (s DaemonStatus) getPeerByAddr(addr netip.Addr) *PeerStatus {
@@ -161,7 +168,7 @@ func callDaemonRetryable[ResultType any](retryable bool, route string, urlencode
 
 		if retryable && errors.Is(err, syscall.ECONNREFUSED) {
 			printInfo("Daemon does not seem to be running")
-			daemonRestart(true)
+			restartDaemonWithConfirmationPrompt()
 			waitDaemon()
 			return lambda(route, urlencodedBody)
 		}
@@ -170,7 +177,7 @@ func callDaemonRetryable[ResultType any](retryable bool, route string, urlencode
 	return response, err
 }
 
-// Technically those should not requre auth tokens so can be run at any time
+// Technically those should not require auth tokens so can be run at any time
 func callDaemonGetRaw[ResultType any](retryable bool, route string) (DaemonResponse[ResultType], error) {
 	return callDaemonRetryable(retryable, route, url.Values{}, func(route string, urlencodedBody url.Values) (DaemonResponse[ResultType], error) {
 		response, err := http.Get(getDaemonApiUrl() + route)

@@ -45,6 +45,11 @@ PeerContainer* HusarnetManager::getPeerContainer()
   return peerContainer;
 }
 
+HooksManager* HusarnetManager::getHooksManager()
+{
+  return hooksManager;
+}
+
 std::string HusarnetManager::getVersion()
 {
   return HUSARNET_VERSION;
@@ -83,12 +88,21 @@ void HusarnetManager::setConfigStorage(ConfigStorage* cs)
 
 bool HusarnetManager::setSelfHostname(std::string newHostname)
 {
-  return Privileged::setSelfHostname(newHostname);
+  this->getHooksManager()->runHook(HookType::rw_request);
+  this->getHooksManager()->waitHook(HookType::rw_request);
+  auto result = Privileged::setSelfHostname(newHostname);
+  this->getHooksManager()->runHook(HookType::rw_release);
+  this->getHooksManager()->waitHook(HookType::rw_release);
+  return result;
 }
 
 void HusarnetManager::updateHosts()
 {
+  this->getHooksManager()->runHook(HookType::rw_request);
+  this->getHooksManager()->waitHook(HookType::rw_request);
   Privileged::updateHostsFile(configStorage->getHostTable());
+  this->getHooksManager()->runHook(HookType::rw_release);
+  this->getHooksManager()->waitHook(HookType::rw_release);
 }
 
 IpAddress HusarnetManager::resolveHostname(std::string hostname)
@@ -187,8 +201,8 @@ void HusarnetManager::changeServer(std::string domain)
 {
   configStorage->setUserSetting(UserSetting::dashboardFqdn, domain);
   setDirty();
-  LOG("Dashboard URL has been changed to %s.", domain.c_str());
-  LOG("DAEMON WILL CONTINUE TO USE THE OLD ONE UNTIL YOU RESTART IT");
+  LOG_WARNING("Dashboard URL has been changed to %s.", domain.c_str());
+  LOG_WARNING("DAEMON WILL CONTINUE TO USE THE OLD ONE UNTIL YOU RESTART IT");
 }
 
 void HusarnetManager::hostTableAdd(std::string hostname, IpAddress address)
@@ -223,12 +237,12 @@ bool HusarnetManager::isWhitelistEnabled()
 
 void HusarnetManager::whitelistEnable()
 {
-  configStorage->setUserSetting(UserSetting::enableWhitelist, true);
+  configStorage->setUserSetting(UserSetting::enableWhitelist, trueValue);
 }
 
 void HusarnetManager::whitelistDisable()
 {
-  configStorage->setUserSetting(UserSetting::enableWhitelist, false);
+  configStorage->setUserSetting(UserSetting::enableWhitelist, falseValue);
 }
 
 bool HusarnetManager::isPeerAddressAllowed(IpAddress address)
@@ -250,14 +264,34 @@ int HusarnetManager::getApiPort()
   return configStorage->getUserSettingInt(UserSetting::daemonApiPort);
 }
 
+int HusarnetManager::getLogVerbosity()
+{
+  return configStorage->getUserSettingInt(UserSetting::logVerbosity);
+}
+
+void HusarnetManager::setLogVerbosity(int logLevel)
+{
+  getGlobalLogManager()->setVerbosity(logLevelFromInt(logLevel));
+  configStorage->setUserSetting(UserSetting::logVerbosity, logLevel);
+}
+
 std::string HusarnetManager::getApiSecret()
 {
-  return Privileged::readApiSecret();
+  this->getHooksManager()->runHook(HookType::rw_request);
+  this->getHooksManager()->waitHook(HookType::rw_request);
+  auto result = Privileged::readApiSecret();
+  this->getHooksManager()->runHook(HookType::rw_release);
+  this->getHooksManager()->waitHook(HookType::rw_release);
+  return result;
 }
 
 std::string HusarnetManager::rotateApiSecret()
 {
+  this->getHooksManager()->runHook(HookType::rw_request);
+  this->getHooksManager()->waitHook(HookType::rw_request);
   Privileged::rotateApiSecret();
+  this->getHooksManager()->runHook(HookType::rw_release);
+  this->getHooksManager()->waitHook(HookType::rw_release);
   return getApiSecret();
 }
 
@@ -297,6 +331,21 @@ void HusarnetManager::setInterfaceName(std::string name)
   // also this should probably be internal setting in windows case
 }
 
+bool HusarnetManager::areHooksEnabled()
+{
+  return configStorage->getUserSettingBool(UserSetting::enableHooks);
+}
+
+void HusarnetManager::hooksEnable()
+{
+  configStorage->setUserSetting(UserSetting::enableHooks, trueValue);
+}
+
+void HusarnetManager::hooksDisable()
+{
+  configStorage->setUserSetting(UserSetting::enableHooks, falseValue);
+}
+
 std::vector<DeviceId> HusarnetManager::getMulticastDestinations(DeviceId id)
 {
   if(!id == deviceIdFromIpAddress(IpAddress::parse(multicastDestination))) {
@@ -328,6 +377,12 @@ HusarnetManager::HusarnetManager()
 {
   Port::init();
   Privileged::init();
+  this->hooksManager = new HooksManager(this);
+}
+
+HusarnetManager::~HusarnetManager()
+{
+  delete this->hooksManager;
 }
 
 void HusarnetManager::readLegacyConfig()
@@ -340,12 +395,17 @@ void HusarnetManager::readLegacyConfig()
 
   LegacyConfig legacyConfig(legacyConfigPath);
   if(!legacyConfig.open()) {
-    LOG("WARN: Legacy config is present, but couldn't read its contents");
+    LOG_WARNING(
+        "Legacy config is present, but couldn't read its contents on path: %s",
+        legacyConfigPath.c_str());
     return;
   }
 
-  LOG("Found legacy config, will attempt to transfer the values to new "
-      "format");
+  LOG_WARNING(
+      "Found legacy config on path: %s, will attempt to transfer the values to "
+      "new "
+      "format",
+      legacyConfigPath.c_str());
 
   auto websetupSecretOld = legacyConfig.getWebsetupSecret();
   auto whitelistEnabledOld = legacyConfig.getWhitelistEnabled();
@@ -369,15 +429,27 @@ void HusarnetManager::readLegacyConfig()
 
 void HusarnetManager::getLicenseStage()
 {
+  this->getHooksManager()->runHook(HookType::rw_request);
+  this->getHooksManager()->waitHook(HookType::rw_request);
   license =
       new License(configStorage->getUserSetting(UserSetting::dashboardFqdn));
+  this->getHooksManager()->runHook(HookType::rw_release);
+  this->getHooksManager()->waitHook(HookType::rw_release);
 }
 
 void HusarnetManager::getIdentityStage()
 {
   // TODO long term - reenable the smartcard support but with proper
   // multiplatform support
-  identity = Privileged::readIdentity();
+  if(Privileged::checkValidIdentityExists()) {
+    identity = Privileged::readIdentity();
+  } else {
+    this->getHooksManager()->runHook(HookType::rw_request);
+    this->getHooksManager()->waitHook(HookType::rw_request);
+    identity = Privileged::createIdentity();
+    this->getHooksManager()->runHook(HookType::rw_release);
+    this->getHooksManager()->waitHook(HookType::rw_release);
+  }
 }
 
 void HusarnetManager::startNetworkingStack()
@@ -474,6 +546,7 @@ void HusarnetManager::stage3()
     }
   }
 
+  getGlobalLogManager()->setVerbosity(logLevelFromInt(this->getLogVerbosity()));
   this->hostTableAdd("husarnet-local", this->getSelfAddress());
 
   stage3Started = true;

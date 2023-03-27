@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -28,12 +29,12 @@ var daemonStartCommand = &cli.Command{
 		},
 	},
 	Action: func(ctx *cli.Context) error {
-		if onWindows() {
-			runSubcommand(false, "nssm", "start", "husarnet")
+		err := ServiceObject.Start()
+		if err != nil {
+			printError("Error starting husarnet-daemon: %s", err)
 		} else {
-			runSubcommand(false, "sudo", "systemctl", "start", "husarnet")
+			printSuccess("Started husarnet-daemon")
 		}
-		printSuccess("Started husarnet-daemon")
 
 		if wait {
 			waitDaemon()
@@ -57,8 +58,12 @@ var daemonRestartCommand = &cli.Command{
 		},
 	},
 	Action: func(ctx *cli.Context) error {
-		daemonRestart(false)
-		printSuccess("Restarted husarnet-daemon")
+		err := ServiceObject.Start()
+		if err != nil {
+			printError("Error restarting husarnet-daemon: %s", err)
+		} else {
+			printSuccess("Restarted husarnet-daemon")
+		}
 
 		if wait {
 			waitDaemon()
@@ -74,12 +79,13 @@ var daemonStopCommand = &cli.Command{
 	Usage:     "stop husarnet daemon",
 	ArgsUsage: " ", // No arguments needed
 	Action: func(ctx *cli.Context) error {
-		if onWindows() {
-			runSubcommand(false, "nssm", "stop", "husarnet")
+		err := ServiceObject.Stop()
+		if err != nil {
+			printError("Error stopping husarnet-daemon: %s", err)
 		} else {
-			runSubcommand(false, "sudo", "systemctl", "stop", "husarnet")
+			printSuccess("Stopped husarnet-daemon")
 		}
-		printSuccess("Stopped husarnet-daemon")
+
 		return nil
 	},
 }
@@ -103,12 +109,91 @@ var daemonStatusCommand = &cli.Command{
 	Action: func(ctx *cli.Context) error {
 		if ctx.Bool("follow") {
 			printStatusFollow(ctx)
-		}else {
+		} else {
 			status := getDaemonStatus()
-			printStatus(ctx,status)
+			printStatus(ctx, status)
 		}
 		return nil
 
+	},
+}
+
+var daemonLogsCommand = &cli.Command{
+	Name:  "logs",
+	Usage: "Display and manage logs settings",
+	Subcommands: []*cli.Command{
+		{
+			Name:      "settings",
+			Aliases:   []string{"status"},
+			Usage:     "print logs settings",
+			ArgsUsage: " ", // No arguments needed
+			Action: func(ctx *cli.Context) error {
+				settings := callDaemonGet[LogsSettings]("/api/logs/settings").Result
+				printSuccess("Logs verbosity level: " + strconv.Itoa(settings.VerbosityLevel))
+				printSuccess("Logs maximum size: " + strconv.Itoa(settings.Size))
+				printSuccess("Logs current size: " + strconv.Itoa(settings.CurrentSize))
+
+				return nil
+			},
+		},
+		{
+			Name:      "print",
+			Aliases:   []string{"get"},
+			Usage:     "print logs",
+			ArgsUsage: " ", // No arguments needed
+			Action: func(ctx *cli.Context) error {
+				logs := callDaemonGet[string]("/api/logs/get").Result
+				lines := strings.Split(logs, "\n")
+
+				for _, line := range lines {
+					printInfo(line)
+				}
+
+				return nil
+			},
+		},
+		{
+			Name:      "verbosity",
+			Aliases:   []string{""},
+			Usage:     "change logs verbosity level",
+			ArgsUsage: "[0-4]",
+			Action: func(ctx *cli.Context) error {
+				requiredArgumentsNumber(ctx, 1)
+
+				verbosityStr := ctx.Args().Get(0)
+				verbosity, error := strconv.Atoi(verbosityStr)
+				if error == nil && verbosity <= 4 && verbosity >= 0 {
+					callDaemonPost[EmptyResult]("/api/logs/settings", url.Values{
+						"verbosity": {verbosityStr},
+					})
+					printSuccess("Verbosity level changed")
+					return nil
+				}
+				printError("Verbosity provided should belong to range 0-4")
+				return nil
+			},
+		},
+		{
+			Name:      "size",
+			Aliases:   []string{""},
+			Usage:     "change size of in memory stored logs",
+			ArgsUsage: "[10-1000]",
+			Action: func(ctx *cli.Context) error {
+				requiredArgumentsNumber(ctx, 1)
+
+				sizeStr := ctx.Args().Get(0)
+				size, error := strconv.Atoi(sizeStr)
+				if error == nil && size <= 1000 && size >= 10 {
+					callDaemonPost[EmptyResult]("/api/logs/settings", url.Values{
+						"size": {sizeStr},
+					})
+					printSuccess("In memory logs size changed")
+					return nil
+				}
+				printError("Size provided should belong to range 10-1000")
+				return nil
+			},
+		},
 	},
 }
 
@@ -129,10 +214,14 @@ var daemonSetupServerCommand = &cli.Command{
 		printSuccess("Successfully requested a change to %s server", pterm.Bold.Sprint(domain))
 		printWarning("This action requires you to restart the daemon in order to use the new value")
 
-		if onWindows() {
-			runSubcommand(true, "nssm", "restart", "husarnet")
-		} else {
-			runSubcommand(true, "sudo", "systemctl", "restart", "husarnet")
+		if !askForConfirmation("Do you want to restart Husarnet daemon now?") {
+			dieEmpty()
+		}
+
+		err := ServiceObject.Restart()
+		if err != nil {
+			printWarning("Wasn't able to restart Husarnet Daemon. Try restarting the service manually.")
+			return err
 		}
 
 		waitDaemon()
@@ -211,6 +300,49 @@ var daemonWhitelistCommand = &cli.Command{
 					"address": {addr},
 				})
 				printSuccess("Removed %s from whitelist", addr)
+
+				return nil
+			},
+		},
+	},
+}
+
+var daemonHooksCommand = &cli.Command{
+	Name:  "hooks",
+	Usage: "Manage hooks on the device.",
+	Subcommands: []*cli.Command{
+		{
+			Name:      "enable",
+			Aliases:   []string{"on"},
+			Usage:     "enable hooks",
+			ArgsUsage: " ", // No arguments needed
+			Action: func(ctx *cli.Context) error {
+				callDaemonPost[EmptyResult]("/api/hooks/enable", url.Values{})
+				printSuccess("Enabled hooks")
+
+				return nil
+			},
+		},
+		{
+			Name:      "disable",
+			Aliases:   []string{"off"},
+			Usage:     "disable hooks",
+			ArgsUsage: " ", // No arguments needed
+			Action: func(ctx *cli.Context) error {
+				callDaemonPost[EmptyResult]("/api/hooks/disable", url.Values{})
+				printSuccess("Disabled hooks")
+
+				return nil
+			},
+		},
+		{
+			Name:      "show",
+			Aliases:   []string{"check", "ls"},
+			Usage:     "check if hooks are enabled",
+			ArgsUsage: " ", // No arguments needed
+			Action: func(ctx *cli.Context) error {
+				status := getDaemonStatus()
+				printHooksStatus(status)
 
 				return nil
 			},
@@ -415,6 +547,7 @@ var daemonGenIdCommand = &cli.Command{
 			if err != nil {
 				printError("Error: could not save new ID: %s", err)
 
+				// TODO: outdated function according to go docs
 				if os.IsPermission(err) {
 					rerunWithSudoOrDie()
 				} else {
@@ -423,7 +556,7 @@ var daemonGenIdCommand = &cli.Command{
 			}
 
 			printInfo("Saved! In order to apply it you need to restart Husarnet Daemon!")
-			daemonRestart(true)
+			restartDaemonWithConfirmationPrompt()
 		} else {
 			pterm.Printf(newId)
 
@@ -444,10 +577,14 @@ var daemonCommand = &cli.Command{
 		joinCommand,
 		daemonSetupServerCommand,
 		daemonStartCommand,
+		daemonLogsCommand,
 		daemonRestartCommand,
 		daemonStopCommand,
 		daemonWhitelistCommand,
+		daemonHooksCommand,
 		daemonWaitCommand,
 		daemonGenIdCommand,
+		serviceInstallCommand,
+		serviceUninstallCommand,
 	},
 }

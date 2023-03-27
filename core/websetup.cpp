@@ -152,7 +152,8 @@ void WebsetupConnection::periodicThread()
     threadMutex.unlock();
 
     if(sendJoin) {
-      LOG_WARNING("Sending join request to websetup");
+      LOG_INFO(
+          "Sending join request to websetup (joincode: %s)", joinCode.c_str());
       send(
           "init-request-join-code",
           {joinTmp, manager->getWebsetupSecret(), hostnameTmp});
@@ -229,7 +230,7 @@ void WebsetupConnection::handleWebsetupPacket(
 
   long s = data.find("\n");
   if(s <= 5) {
-    LOG_ERROR("bad websetup packet format");
+    LOG_ERROR("bad websetup packet format: %s", data.c_str());
     return;
   }
   std::string seqnum = data.substr(0, 5);
@@ -272,6 +273,7 @@ std::list<std::string> WebsetupConnection::handleWebsetupCommand(
     lastInitReply = Port::getCurrentTime();
     joinCode = "";  // mark that we've already joined
     threadMutex.unlock();
+    manager->getHooksManager()->runHook(HookType::joinned);
     return {"ok"};
   } else if(command == "whitelist-add") {
     manager->whitelistAdd(IpAddress::fromBinary(decodeHex(payload)));

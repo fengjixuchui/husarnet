@@ -57,6 +57,16 @@
       name: 'Docker run ' + container + ' ' + command,
       run: 'docker run --rm --privileged --volume $(pwd):/app ' + container + ' ' + command,
     },
+
+    build_macos_daemon:: function() {
+      name: 'Build daemon natively on MacOS',
+      run: './daemon/build.sh unix macos_arm64',
+    },
+
+    build_macos_cli:: function() {
+      name: 'Build CLI natively on MacOS',
+      run: './cli/build.sh macos arm64',
+    },
   },
 
   jobs: {
@@ -95,12 +105,38 @@
       ],
     },
 
+    build_builder:: function(ref) {
+      needs: [],
+
+      'runs-on': 'ubuntu-latest',
+
+      steps: [
+        $.steps.checkout(ref) + {
+          with+: {
+            'fetch-depth': 22,  // This is a semi-random number. We don't want to fetch the whole repository, we only want "a couple of them"
+          },
+        },
+        $.steps.ghcr_login(),
+        {
+          name: 'If there were any changes to builder - build it and push to ghcr',
+          run: |||
+            if git diff --name-only ${{ github.event.before }} ${{ github.event.after }} | grep -e "^builder/"; then
+              ./builder/build.sh && ./builder/push.sh
+            else
+              echo "No changes to the builder found - refusing to rebuild"
+            fi
+          |||,
+        },
+      ],
+    },
+
     build_unix:: function(ref) {
       needs: [],
 
       'runs-on': 'ubuntu-latest',
 
       strategy: {
+        'fail-fast': false,
         matrix: {
           arch: [
             'amd64',
@@ -120,15 +156,18 @@
       ],
     },
 
-    build_macos:: function(ref) {
+    build_macos_natively:: function(ref) {
       needs: [],
 
-      'runs-on': 'ubuntu-latest',
+      'runs-on': [
+        'self-hosted',
+        'macOS',
+      ],
 
       steps: [
         $.steps.checkout(ref),
-        $.steps.ghcr_login(),
-        $.steps.builder('/app/platforms/macos/build.sh arm64'),
+        $.steps.build_macos_daemon(),
+        $.steps.build_macos_cli(),
         $.steps.push_artifacts('*macos*'),
       ],
     },
@@ -197,6 +236,7 @@
       'runs-on': 'ubuntu-latest',
 
       strategy: {
+        'fail-fast': false,
         matrix: {
           container_name: [
             docker_project + ':amd64',
@@ -245,7 +285,7 @@
         'run_tests',
         'run_integration_tests',
         'build_unix',
-        'build_macos',
+        'build_macos_natively',
         'build_windows_installer',
       ],
 
@@ -270,7 +310,7 @@
         'run_tests',
         'run_integration_tests',
         'build_unix',
-        'build_macos',
+        'build_macos_natively',
         'build_windows_installer',
       ],
 
@@ -304,6 +344,7 @@
       'runs-on': 'ubuntu-latest',
 
       strategy: {
+        'fail-fast': false,
         matrix: {
           include: [
             {
